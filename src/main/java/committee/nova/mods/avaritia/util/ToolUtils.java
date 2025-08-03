@@ -9,6 +9,7 @@ import committee.nova.mods.avaritia.common.entity.EndestPearlEntity;
 import committee.nova.mods.avaritia.common.entity.arrow.HeavenSubArrowEntity;
 import committee.nova.mods.avaritia.common.entity.arrow.TraceArrowEntity;
 import committee.nova.mods.avaritia.common.item.tools.InfinityArmorItem;
+import committee.nova.mods.avaritia.common.item.tools.infinity.InfinitySwordItem;
 import committee.nova.mods.avaritia.init.config.ModConfig;
 import committee.nova.mods.avaritia.init.handler.ItemCaptureHandler;
 import committee.nova.mods.avaritia.init.registry.ModDamageTypes;
@@ -60,7 +61,6 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.ForgeHooks;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.Tags;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.items.ItemHandlerHelper;
@@ -457,7 +457,60 @@ public class ToolUtils {
 
 
     /**
-     * 范围攻击
+     * 范围攻击 (寰宇支配之剑右键)
+     *
+     * @param sword      剑
+     * @param player     玩家
+     * @param range      范围
+     * @param hurtAnimal 是否攻击动物
+     * @param lightOn    使用闪电
+     */
+    public static void aoeAttack(InfinitySwordItem sword, Player player, float range, boolean hurtAnimal, boolean lightOn) {
+        if (player.level().isClientSide) return;
+        AABB aabb = player.getBoundingBox().inflate(range);
+        List<Entity> toAttack = player.level().getEntities(player, aabb);
+        var endlessDamage = ModConfig.isSwordAttackEndless.get();
+        var level = player.level();
+        if (level instanceof ServerLevel serverLevel) {
+            for (Entity entity : toAttack) {
+                if (entity instanceof LivingEntity victim) {
+                    var damageSource = player.damageSources().source(ModDamageTypes.INFINITY, victim, player);
+                    if (victim == player || victim.isInvulnerableTo(damageSource) || victim instanceof Villager || victim.getType().is(ModTags.NEUTRAL_CREATURES) || (!hurtAnimal && victim instanceof Animal)) {
+                        continue;
+                    }
+                    if (victim instanceof Player pvp) {
+                        if (ToolUtils.isInfinite(pvp)) {
+                            serverLevel.explode(player, pvp.getX(), pvp.getY(), pvp.getZ(), 25.0F, Level.ExplosionInteraction.MOB);
+                            continue;
+                        }
+                    }
+                    if (victim instanceof EnderDragon dragon) {
+                        dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+                    } else {
+                        sword.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+                    }
+                    if (endlessDamage) {
+                        if (victim.isDeadOrDying()) {
+                            victim.setHealth(0);
+                            sword.die(victim, damageSource);
+                            player.killedEntity(serverLevel, victim);
+                        }
+                    }
+                    if (lightOn) {
+                        LightningBolt lightningbolt = EntityType.LIGHTNING_BOLT.create(player.level());
+                        if (lightningbolt != null) {
+                            lightningbolt.moveTo(Vec3.atBottomCenterOf(victim.blockPosition()));
+                            lightningbolt.setCause(player instanceof ServerPlayer ? (ServerPlayer) player : null);
+                            player.level().addFreshEntity(lightningbolt);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 范围攻击 (通用, 例如无尽图腾)
      *
      * @param player     玩家
      * @param range      范围
@@ -467,35 +520,35 @@ public class ToolUtils {
      */
     public static void aoeAttack(Player player, float range, float damage, boolean hurtAnimal, boolean lightOn) {
         if (player.level().isClientSide) return;
-        AABB aabb = player.getBoundingBox().deflate(range);
+        AABB aabb = player.getBoundingBox().inflate(range);
         List<Entity> toAttack = player.level().getEntities(player, aabb);
         DamageSource src = player.damageSources().source(ModDamageTypes.INFINITY, player, player);
         toAttack.stream()
-                .filter(entity -> entity instanceof Mob)
-                .filter(entity -> !entity.getType().is(ModTags.NEUTRAL_CREATURES))
-                .filter(entity -> !(entity instanceof Villager))
-                .forEach(entity -> {
-                    if (entity instanceof Mob mob) {
-                        if (mob instanceof Animal animal && hurtAnimal) {
-                            animal.hurt(src, damage);
-                        } else if (mob instanceof EnderDragon dragon) {
-                            dragon.hurt(dragon.head, src, Float.POSITIVE_INFINITY);
-                        } else if (mob instanceof WitherBoss wither) {
-                            wither.setInvulnerableTicks(0);
-                            wither.hurt(src, damage);
-                        } else if (!(mob instanceof Animal)) {
-                            mob.hurt(src, damage);
-                        }
+                .filter(entity -> entity instanceof LivingEntity)
+                .map(entity -> (LivingEntity) entity)
+                .filter(victim -> victim != player && !victim.isInvulnerableTo(src))
+                .filter(victim -> !(victim instanceof Villager))
+                .filter(victim -> !victim.getType().is(ModTags.NEUTRAL_CREATURES))
+                .filter(victim -> hurtAnimal || !(victim instanceof Animal))
+                .forEach(victim -> {
+                    if (victim instanceof EnderDragon dragon) {
+                        dragon.hurt(dragon.head, src, Float.POSITIVE_INFINITY);
+                    } else if (victim instanceof WitherBoss wither) {
+                        wither.setInvulnerableTicks(0);
+                        wither.hurt(src, damage);
+                    } else {
+                        victim.hurt(src, damage);
                     }
-                    LightningBolt lightningbolt = EntityType.LIGHTNING_BOLT.create(player.level());
-                    if (lightOn && lightningbolt != null) {
-                        if (!(entity instanceof Animal && hurtAnimal)) {
-                            lightningbolt.moveTo(Vec3.atBottomCenterOf(entity.blockPosition()));
-                            lightningbolt.setCause(player instanceof ServerPlayer serverPlayer ? serverPlayer : null);
+
+                    if (lightOn) {
+                        LightningBolt lightningbolt = EntityType.LIGHTNING_BOLT.create(player.level());
+                        if (lightningbolt != null) {
+                            lightningbolt.moveTo(Vec3.atBottomCenterOf(victim.blockPosition()));
+                            lightningbolt.setCause(player instanceof ServerPlayer ? (ServerPlayer) player : null);
                             player.level().addFreshEntity(lightningbolt);
                         }
                     }
-        });
+                });
     }
 
 
@@ -726,7 +779,7 @@ public class ToolUtils {
      * @param player 玩家
      * @param pos    坐标
      * @param event  事件
-     *               from <a href="https://github.com/yuoft/MoreEnchants/blob/master/src/main/java/com/yuo/enchants/Event/EventHelper.java">...</a>
+     * from <a href="https://github.com/yuoft/MoreEnchants/blob/master/src/main/java/com/yuo/enchants/Event/EventHelper.java">...</a>
      */
     public static void meltingAchieve(Level world, Player player, BlockPos pos, BlockEvent.BreakEvent event) {
         if (!world.isClientSide) {
