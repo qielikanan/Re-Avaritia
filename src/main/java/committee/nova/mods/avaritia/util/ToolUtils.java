@@ -455,6 +455,34 @@ public class ToolUtils {
         world.playSound(player, player.getOnPos(), SoundEvents.ENDER_PEARL_THROW, SoundSource.NEUTRAL, 0.5F, 0.4F / (world.random.nextFloat() * 0.4F + 0.8F));
     }
 
+    /**
+     * 绝对击杀
+     * @param victim 目标
+     * @param player 玩家
+     */
+    public static void absoluteKill(LivingEntity victim, Player player) {
+        if (victim.level().isClientSide || !victim.isAlive()) {
+            return;
+        }
+        // Break invulnerability
+        victim.setInvulnerable(false);
+        victim.invulnerableTime = 0;
+
+        // Use multiple methods to ensure death
+        victim.kill();
+        victim.die(player.damageSources().source(ModDamageTypes.INFINITY, player, player));
+        victim.setHealth(0);
+        victim.dead = true;
+
+        // Force removal from the world as a last resort
+        if (victim.isAlive()) {
+            victim.remove(Entity.RemovalReason.KILLED);
+        }
+        if (!victim.isRemoved()) {
+            victim.discard();
+        }
+    }
+
 
     /**
      * 范围攻击 (寰宇支配之剑右键)
@@ -464,8 +492,9 @@ public class ToolUtils {
      * @param range      范围
      * @param hurtAnimal 是否攻击动物
      * @param lightOn    使用闪电
+     * @param isAbsolute 是否为绝对抹杀模式
      */
-    public static void aoeAttack(InfinitySwordItem sword, Player player, float range, boolean hurtAnimal, boolean lightOn) {
+    public static void aoeAttack(InfinitySwordItem sword, Player player, float range, boolean hurtAnimal, boolean lightOn, boolean isAbsolute) {
         if (player.level().isClientSide) return;
         AABB aabb = player.getBoundingBox().inflate(range);
         List<Entity> toAttack = player.level().getEntities(player, aabb);
@@ -484,18 +513,25 @@ public class ToolUtils {
                             continue;
                         }
                     }
-                    if (victim instanceof EnderDragon dragon) {
-                        dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+
+                    // Mode check
+                    if (isAbsolute) {
+                        absoluteKill(victim, player);
                     } else {
-                        sword.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
-                    }
-                    if (endlessDamage) {
-                        if (victim.isDeadOrDying()) {
+                        if (victim instanceof EnderDragon dragon) {
+                            dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+                        } else {
+                            sword.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+                        }
+                        if (endlessDamage && victim.isAlive()) {
                             victim.setHealth(0);
                             sword.die(victim, damageSource);
-                            player.killedEntity(serverLevel, victim);
+                            if (!victim.isRemoved()) {
+                                victim.discard();
+                            }
                         }
                     }
+
                     if (lightOn) {
                         LightningBolt lightningbolt = EntityType.LIGHTNING_BOLT.create(player.level());
                         if (lightningbolt != null) {

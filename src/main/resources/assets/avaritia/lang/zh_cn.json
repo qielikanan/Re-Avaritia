@@ -351,5 +351,9 @@
   "gui.avaritia.rule.mod_fluid": "模组(流体): %d",
   "gui.avaritia.rule.any_item": "任意物品",
   "gui.avaritia.rule.any_fluid": "任意流体",
-  "gui.avaritia.rule.tip": "用鼠标滚轮选择"
+  "gui.avaritia.rule.tip": "用鼠标滚轮选择",
+  "tooltip.avaritia.sword_mode": "攻击模式: %s",
+  "tooltip.avaritia.sword_mode.endless": "§c无尽伤害",
+  "tooltip.avaritia.sword_mode.absolute": "§4绝对抹杀",
+  "tooltip.avaritia.sword_mode_switch": "寰宇支配之剑模式已切换为: %s"
 }

@@ -47,6 +47,8 @@ import java.util.List;
  * Version: 1.0
  */
 public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
+    private static final String NBT_MODE = "absolute_kill";
+
     public InfinitySwordItem() {
         super(ModToolTiers.INFINITY, 900, 0F, (new Properties())
                 .rarity(ModRarities.COSMIC)
@@ -54,39 +56,64 @@ public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
                 .fireResistant());
     }
 
+    // Helper method to get the current mode from NBT
+    public static boolean isAbsoluteKill(ItemStack stack) {
+        return stack.hasTag() && stack.getTag().getBoolean(NBT_MODE);
+    }
+
+    // Helper method to set the mode to NBT
+    public static void setAbsoluteKill(ItemStack stack, boolean mode) {
+        stack.getOrCreateTag().putBoolean(NBT_MODE, mode);
+    }
+
     @Override
     public boolean onLeftClickEntity(ItemStack stack, Player player, Entity entity) {
+        if (!(entity instanceof LivingEntity victim)) {
+            return false;
+        }
+
         var level = player.level();
-        var endlessDamage = ModConfig.isSwordAttackEndless.get();
-        if (!level.isClientSide && level instanceof ServerLevel serverLevel && entity instanceof LivingEntity victim) {
-            var damageSource = player.damageSources().source(ModDamageTypes.INFINITY, victim, player);
-            ToolUtils.sweepAttack(serverLevel, player, victim);//横扫
-            if (victim instanceof EnderDragon dragon ) {
-                dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
-            } else if (victim instanceof Player pvp) {
-                if (ToolUtils.isInfinite(pvp)) {
-                    // 玩家身着无尽甲则只造成爆炸伤害
-                    serverLevel.explode(player, pvp.getBlockX(), pvp.getBlockY(), pvp.getBlockZ(), 25.0F, Level.ExplosionInteraction.MOB);
-                    return true;//直接返回
-                } else {
-                    this.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
-                }
+        if (level.isClientSide || !(level instanceof ServerLevel serverLevel)) {
+            return false;
+        }
 
+        ToolUtils.sweepAttack(serverLevel, player, victim);
+
+        // Check for Absolute Kill mode
+        if (isAbsoluteKill(stack)) {
+            if (victim instanceof Player pvp && ToolUtils.isInfinite(pvp)) {
+                serverLevel.explode(player, pvp.getX(), pvp.getY(), pvp.getZ(), 25.0F, Level.ExplosionInteraction.MOB);
             } else {
-                this.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
-            }
-
-            if (endlessDamage) {
-                if (victim.isDeadOrDying()) {
-                    victim.setHealth(0);//设置血量为零
-                    this.die(victim, damageSource);//修正设置死亡
-                    player.killedEntity(serverLevel, victim);//添加至信息统计
-                    //player.getCombatTracker().recordDamage(damageSource, victim.getHealth());//添加至伤害记录
-                }
+                ToolUtils.absoluteKill(victim, player);
             }
             return true;
         }
-        return false;
+
+        // Original endless damage logic
+        var endlessDamage = ModConfig.isSwordAttackEndless.get();
+        var damageSource = player.damageSources().source(ModDamageTypes.INFINITY, victim, player);
+
+        if (victim instanceof EnderDragon dragon) {
+            dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
+        } else if (victim instanceof Player pvp) {
+            if (ToolUtils.isInfinite(pvp)) {
+                serverLevel.explode(player, pvp.getX(), pvp.getY(), pvp.getZ(), 25.0F, Level.ExplosionInteraction.MOB);
+                return true;
+            } else {
+                this.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
+            }
+        } else {
+            this.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
+        }
+
+        if (endlessDamage && victim.isAlive()) {
+            victim.setHealth(0);
+            this.die(victim, damageSource);
+            if (!victim.isRemoved()) {
+                victim.discard();
+            }
+        }
+        return true;
     }
 
     public boolean hurt(LivingEntity victim, DamageSource pSource, float pAmount) {
@@ -237,9 +264,21 @@ public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
     }
     @Override
     public @NotNull InteractionResultHolder<ItemStack> use(Level level, Player player, @NotNull InteractionHand hand) {
-        var heldItem = player.getItemInHand(hand);
+        ItemStack heldItem = player.getItemInHand(hand);
+
+        // Mode switching logic on Shift + Right-click
+        if (player.isShiftKeyDown()) {
+            if (!level.isClientSide) {
+                boolean currentMode = isAbsoluteKill(heldItem);
+                setAbsoluteKill(heldItem, !currentMode);
+                player.sendSystemMessage(Component.translatable("tooltip.avaritia.sword_mode_switch", Component.translatable(!currentMode ? "tooltip.avaritia.sword_mode.absolute" : "tooltip.avaritia.sword_mode.endless")));
+            }
+            return InteractionResultHolder.success(heldItem);
+        }
+
+        // Original AOE attack logic
         if (!level.isClientSide) {
-            ToolUtils.aoeAttack(this, player, ModConfig.swordAttackRange.get(), ModConfig.isSwordAttackAnimal.get(), ModConfig.isSwordAttackLightning.get());
+            ToolUtils.aoeAttack(this, player, ModConfig.swordAttackRange.get(), ModConfig.isSwordAttackAnimal.get(), ModConfig.isSwordAttackLightning.get(), isAbsoluteKill(heldItem));
             player.getCooldowns().addCooldown(heldItem.getItem(), 20);
         }
         level.playSound(player, player.getOnPos(), SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 1.0f, 5.0f);
@@ -281,6 +320,12 @@ public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
     @Override
     public void appendHoverText(@NotNull ItemStack stack, @Nullable Level level, List<Component> tooltipComponents,
                                 @NotNull TooltipFlag isAdvanced) {
+        super.appendHoverText(stack, level, tooltipComponents, isAdvanced);
         tooltipComponents.add(ModTooltips.INIT_ENCHANT.args(Enchantments.MOB_LOOTING.getFullname(10)).build());
+        if (isAbsoluteKill(stack)) {
+            tooltipComponents.add(Component.translatable("tooltip.avaritia.sword_mode", Component.translatable("tooltip.avaritia.sword_mode.absolute")));
+        } else {
+            tooltipComponents.add(Component.translatable("tooltip.avaritia.sword_mode", Component.translatable("tooltip.avaritia.sword_mode.endless")));
+        }
     }
 }
