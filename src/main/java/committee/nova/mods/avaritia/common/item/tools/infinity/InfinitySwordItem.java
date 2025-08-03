@@ -79,17 +79,7 @@ public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
 
         ToolUtils.sweepAttack(serverLevel, player, victim);
 
-        // Check for Absolute Kill mode
-        if (isAbsoluteKill(stack)) {
-            if (victim instanceof Player pvp && ToolUtils.isInfinite(pvp)) {
-                serverLevel.explode(player, pvp.getX(), pvp.getY(), pvp.getZ(), 25.0F, Level.ExplosionInteraction.MOB);
-            } else {
-                ToolUtils.absoluteKill(victim, player);
-            }
-            return true;
-        }
-
-        // Original endless damage logic
+        // Step 1: Always apply endless damage first.
         var endlessDamage = ModConfig.isSwordAttackEndless.get();
         var damageSource = player.damageSources().source(ModDamageTypes.INFINITY, victim, player);
 
@@ -106,13 +96,17 @@ public class InfinitySwordItem extends SwordItem implements InitEnchantItem {
             this.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : this.getTier().getAttackDamageBonus());
         }
 
+        // Step 2: Apply the "elegant" kill logic from Re-Avaritia
         if (endlessDamage && victim.isAlive()) {
             victim.setHealth(0);
             this.die(victim, damageSource);
-            if (!victim.isRemoved()) {
-                victim.discard();
-            }
         }
+        
+        // Step 3: If in Absolute Kill mode and the victim is STILL alive, use the final defense line.
+        if (isAbsoluteKill(stack) && victim.isAlive()) {
+            ToolUtils.absoluteKill(victim, player);
+        }
+        
         return true;
     }
 

@@ -456,7 +456,7 @@ public class ToolUtils {
     }
 
     /**
-     * 绝对击杀
+     * 绝对击杀, 参照 SwordOfTheCosmosMixin
      * @param victim 目标
      * @param player 玩家
      */
@@ -464,9 +464,12 @@ public class ToolUtils {
         if (victim.level().isClientSide || !victim.isAlive()) {
             return;
         }
-        // Break invulnerability
+        // Break invulnerability and effects
         victim.setInvulnerable(false);
         victim.invulnerableTime = 0;
+        victim.removeAllEffects();
+        victim.removeVehicle();
+        victim.setSecondsOnFire(Integer.MAX_VALUE);
 
         // Use multiple methods to ensure death
         victim.kill();
@@ -514,22 +517,22 @@ public class ToolUtils {
                         }
                     }
 
-                    // Mode check
-                    if (isAbsolute) {
-                        absoluteKill(victim, player);
+                    // Step 1: Always apply endless damage first.
+                    if (victim instanceof EnderDragon dragon) {
+                        dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
                     } else {
-                        if (victim instanceof EnderDragon dragon) {
-                            dragon.hurt(dragon.head, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
-                        } else {
-                            sword.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
-                        }
-                        if (endlessDamage && victim.isAlive()) {
-                            victim.setHealth(0);
-                            sword.die(victim, damageSource);
-                            if (!victim.isRemoved()) {
-                                victim.discard();
-                            }
-                        }
+                        sword.hurt(victim, damageSource, endlessDamage ? Float.MAX_VALUE : sword.getTier().getAttackDamageBonus());
+                    }
+                    
+                    // Step 2: Apply the "elegant" kill logic from Re-Avaritia
+                    if (endlessDamage && victim.isAlive()) {
+                        victim.setHealth(0);
+                        sword.die(victim, damageSource);
+                    }
+
+                    // Step 3: If in Absolute Kill mode and the victim is STILL alive, use the final defense line.
+                    if (isAbsolute && victim.isAlive()) {
+                        absoluteKill(victim, player);
                     }
 
                     if (lightOn) {
